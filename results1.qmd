@@ -1,0 +1,822 @@
+---
+title: "Results"
+author: "Artemiy Okhotin"
+format: docx
+editor: visual
+execute:
+  echo: false
+  warning: false
+---
+
+## Results
+
+```{r libraries}
+#| warning: false
+#| echo: false
+library(knitr)
+library(table1)
+library(gtsummary)
+library(dplyr)
+library(survival)
+library(survminer)
+library(ggplot2)
+library(lubridate)
+```
+
+```{r datasets}
+
+counts <- read.csv("/home/okhotin/Dropbox/R/masters/counts.csv")
+counts48 <- read.csv("/home/okhotin/Dropbox/R/masters/counts48.csv")
+dc <- read.csv("/home/okhotin/Dropbox/R/masters/dc.csv")
+caf <- read.csv("/home/okhotin/Dropbox/R/masters/caf.csv")
+
+## temporary
+dc[dc$id==376,]$arrhythmia <- 'AF'
+caf <-  caf[caf$patient_age < 100,]
+dc <-  dc[dc$patient_age < 100,]
+```
+
+## Characteristics of cardioversions
+
+```{r table1}
+#| echo: false
+#| tbl-cap: "Characteristics of cardioversions"
+dc$patient_sex <- factor(dc$patient_sex, levels=c("male","female"),
+       labels=c("Male", 
+                "Female"))
+label(dc$patient_sex) <- "Sex"
+label(dc$patient_age) <- "Age (years)"
+label(dc$weight) <- "Weight (kg)"
+label(dc$height) <- "Height (cm)"
+
+dc$bmi <- 10000 * dc$weight / dc$height^2 
+label(dc$bmi) <- "Body mass index"
+
+dc$settings <- factor(dc$settings, levels=c("outpatient", "inpatient"),
+       labels=c("Outpatient", 
+                "Inpatient"))
+label(dc$settings) <- "Care settings"
+
+dc$outcome <- factor(dc$outcome, levels=c(0,1),
+       labels=c("Failure", 
+                "Success"))
+label(dc$outcome) <- "Immediate outcome"
+
+#dc$TEE <- factor(dc$TEE, levels=c(1,0),
+#       labels=c("Yes", 
+#                "No"))
+label(dc$TEE) <- "TEE performed"
+
+dc$ac_drug <- factor(dc$ac_drug, levels=c("warfarin", "NOAC", "none"),
+                     labels=c("Warfarin", "NOAC", "None"))
+label(dc$ac_drug) <- "Prior anticoagulation"
+
+label(dc$ac_chronic) <- "Chronic anticoagulation"
+
+label(dc$sedation_dose) <- "Dose of propofol (mg)"
+
+label(dc$arrhythmia) <- "Type of arrhythmia"
+
+dc$duration_of_af <- factor(dc$duration_of_af, levels=c("less than 48 hours", 
+                                                 "less than a week",
+                                                 "more than a week",
+                                                 "more than a month",
+                                                 "unknown"))
+label(dc$duration_of_af) <- "Duration of arrhythmia"
+
+dc <- dc %>% mutate(
+  longterm = case_when(
+    (duration_of_af == 'less than 48 hours' | 
+      duration_of_af == 'less than a week') ~ 0,
+    T ~ 1
+  )
+)
+dc$longterm <- factor(dc$longterm, levels=c(0,1),
+                 labels=c('No', 'Yes'))
+label(dc$longterm) <-  "Longterm AF (> week)"
+
+label(dc$cmbs) <- "Comorbidities"
+label(dc$MED) <- "Medication index"
+label(dc$shocks) <- "Number of schocks"
+label(dc$joules) <- "Energy of last shock"
+
+
+label(dc$HF) <- 'Heart failure'
+label(dc$HTN) <- 'Arterial hypertension'
+label(dc$DM) <- 'Diabetes mellitus'
+label(dc$CKD) <- 'Chronic kidney disease'
+label(dc$STROKE) <- 'Stroke'
+label(dc$CHD) <- 'Coronary heart disease'
+
+
+dc$specialty <- 'internist'
+dc[dc$physician=="А О" | dc$physician=='М О',]$specialty <- 'cardiologist'
+
+
+dc$specialty <- factor(dc$specialty, levels=c('internist', 'cardiologist'),
+                        labels=c('internist', 'cardiologist'))
+
+label(dc$specialty) <- 'Specialty of provider'
+
+
+
+dc$anycomplications <- dc$complications!=''
+label(dc$anycomplications) <- 'Complications'
+
+label(dc$ef) <- "LV ejection fraction, %"
+label(dc$edvi) <- "Index of LV end-diastolic volume, ml/m²"
+label(dc$lavi) <- "Index of left atrial volume, ml/m²"
+label(dc$lvmi) <- "Index of LV mass, g/m²"
+
+
+
+
+dc %>%
+  select(outcome, patient_age, patient_sex, bmi, sedation_dose, joules, shocks, settings,
+         TEE, ac_drug, arrhythmia, duration_of_af, HTN, CHD, HF, DM, CKD, MED,
+         specialty, unstable, anycomplications, ef, edvi, lavi, lvmi) %>%
+  tbl_summary(by=settings,
+              missing="no") %>%
+  add_overall() %>% add_n()
+
+
+```
+
+## Settings
+
+```{r settings}
+#| tbl-cap: "Factors associated with inpatient settings"
+
+dc$weekday <- factor(dc$weekday, 
+                             levels=(c(2,3,4,5,6,7,1)),
+                             labels=c('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'))
+label(dc$weekday) <- "Week day"
+
+
+my_theme <-
+  list(
+    "pkgwide-str:ci.sep" = "—"
+  )
+
+set_gtsummary_theme(my_theme)
+
+
+tbl_un <- dc %>%
+  select(settings, patient_age, patient_sex, HTN, CHD, HF, DM, 
+             CKD, STROKE, TEE, MED, duration_of_af, ac_chronic, arrhythmia, bmi,
+             ef, edvi, lvmi, lavi) %>%
+  tbl_uvregression(
+    method = glm,
+    y = settings,
+    method.args = list(family = binomial),
+    exponentiate = TRUE
+  ) %>%
+  modify_table_body(dplyr::select, -p.value)
+
+tbl_un
+
+```
+
+## Calendar
+
+```{r calendar}
+#| tbl-cap: "Relative incidences of cardioversion by week day and season."
+
+counts48$wday <- factor(counts48$wday, 
+                      levels=c('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'),
+                      labels=c('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'))
+
+counts$wday <- factor(counts$wday, 
+                      levels=c('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'),
+                      labels=c('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'))
+
+label(counts$wday) <- 'Week day'
+label(counts48$wday) <- 'Week day'
+
+counts$summer <- factor(counts$summer, levels=c('winter', 'summer'),
+                        labels=c('Non-summer', 'Summer'))
+counts48$summer <- factor(counts48$summer, levels=c('winter', 'summer'),
+                        labels=c('Non-summer', 'Summer'))
+
+label(counts48$summer) <- 'Season'
+label(counts$summer) <- 'Season'
+
+t1 <- counts %>%
+  ungroup() %>%
+  select(wday, summer, dc) %>%
+  tbl_uvregression(
+    method = glm,
+    y = dc,
+    method.args = list(family = poisson),
+    hide_n = T,
+    exponentiate = TRUE
+  ) %>%
+  modify_table_body(dplyr::select, -p.value)
+
+t2 <- counts48 %>%
+  ungroup() %>%
+  select(wday, summer, dc) %>%
+  tbl_uvregression(
+    method = glm,
+    y = dc,
+    method.args = list(family = poisson),
+    hide_n = T,
+    exponentiate = TRUE
+  ) %>%
+  modify_table_body(dplyr::select, -p.value)
+
+tbl_merge(
+  list(t1, t2),
+  tab_spanner = c("**All cardioversions**", "**AF less than 48 hours**")
+)
+```
+
+## Predictors of the immediate success
+
+```{r determinants}
+#| tbl-cap: "Univariate predictors of successfuls cardioversion"
+
+t1 <- dc %>% select(outcome, patient_age, patient_sex, weekday, specialty,
+             settings, longterm, arrhythmia,
+             TEE, sedation_dose, HTN, CHD, HF, DM, CKD,
+             bmi, ef, edvi, lvmi, lavi) %>%
+  tbl_uvregression(
+    method = glm,
+    y = outcome,
+    method.args = list(family = binomial),
+    hide_n = T,
+    exponentiate = TRUE
+  )  %>%  modify_table_body(dplyr::select, -p.value)
+
+
+
+t2 <- dc %>% 
+  filter(longterm == 'No') %>%
+  select(outcome, patient_age, patient_sex, weekday, specialty,
+             settings, arrhythmia,
+             TEE, sedation_dose, HTN, CHD, HF, DM, CKD,
+             bmi, ef, edvi, lvmi, lavi) %>%
+  tbl_uvregression(
+    method = glm,
+    y = outcome,
+    method.args = list(family = binomial),
+    hide_n = T,
+    exponentiate = TRUE
+  ) %>%  modify_table_body(dplyr::select, -p.value)
+
+tbl_merge(
+  list(t1, t2),
+  tab_spanner = c("**All cardioversions**", "**Arrhythmia less than a week**")
+)
+
+
+```
+
+## Cardioversion-free survival
+
+```{r predictorsofnextparoxysm}
+#| tbl-cap: "Univariate predictors of arrhythmia recurrence after successful cardioversion"
+
+dc$repeated <- as.integer(dc$event_id>1)
+label(dc$repeated) <- 'Repeated cardioversion'
+
+dc <- dc %>%
+  mutate(
+    aad1 = case_when(
+      aad=='' ~ "None or beta-blocker",
+      aad=="beta-blocker" ~ "None or beta-blocker",
+      T ~ "Antiarrhythmic drug")
+  )
+
+dc$aad1 <- factor(dc$aad1, levels=c("None or beta-blocker", "Antiarrhythmic drug"))
+
+label(dc$aad1) <- "Antiarrhythmic drug prescription"
+
+dc_success <- dc %>%
+  filter(outcome=='Success')
+
+
+tbl_uv <-
+  tbl_uvregression(
+    dc_success[c("event_time", "event_type", "patient_sex", "patient_age",
+                                 "repeated", "HF", "DM", "HTN", "CHD", "CKD", "STROKE", "aad1",
+                                 "arrhythmia", "longterm", "bmi", "ef", "edvi", "lvmi", "lavi")],
+    method = coxph,
+    y = Surv(event_time, event_type),
+    exponentiate = TRUE,
+    hide_n = T
+  ) %>%  modify_table_body(dplyr::select, -p.value)
+
+tbl_uv
+
+```
+```{r aad_adjusted}
+#| tbl-cap: "Antiarrhythmic drug prescription as predictor of arrhythmia recurrence"
+
+
+cox <- coxph(Surv(event_time,event_type) ~
+               patient_sex+ patient_age + 
+               repeated + HF + aad1 + duration_of_af,
+             data=dc_success)
+
+adjusted <- cox %>% tbl_regression(exponentiate = T, include=c('aad1'))
+
+cox <- coxph(Surv(event_time,event_type) ~ aad1,
+             data=dc_success)
+
+crude <- cox %>% tbl_regression(exponentiate = T, include=c('aad1'))
+
+tbl_merge(
+  tbls = list(crude, adjusted),
+  tab_spanner = c("**Crude**", "**Adjusted for age, sex, repeated cardioversion, heart failure and arrhythmia duration**")
+)
+
+
+
+
+```
+
+
+
+
+```{r arrhythmia_free_survival}
+#| tbl-cap: "Cumulative arrythmia-free survival probabilities"
+
+
+
+fit <- survfit(Surv(event_time,event_type)~1,
+               data=dc_success)
+
+
+
+dc_success$HF <- factor(dc_success$HF, levels=c(0,1),
+                        labels = c('No', 'Yes'))
+dc_success$repeated <- factor(dc_success$repeated, levels=c(0,1),
+                        labels = c('No', 'Yes'))
+label(dc_success$repeated) <- 'Repeated cardioversion'
+
+tbl_survfit(
+  list(survfit(Surv(event_time,event_type) ~ 1, dc_success),
+       survfit(Surv(event_time,event_type) ~ HF, dc_success),
+       survfit(Surv(event_time,event_type) ~ repeated, dc_success),
+       survfit(Surv(event_time,event_type) ~ longterm, dc_success)
+  ),
+  times = c(7,30, 180),
+  label_header = "**{time} days**"
+)
+
+
+```
+
+### Graph - overall
+
+```{r shock_free_survival_curve_graph_by_HF1}
+
+
+
+
+fit <- survfit(Surv(event_time,event_type)~1,
+               data=dc)
+
+ggsurvplot(fit, data=dc, 
+           surv.median.line = "hv", 
+           risk.table=T,
+           xlim = c(0,365),
+           break.time.by = 60,
+           conf.int = T, pval =F, pval.coord=c(50,1),
+#           legend.labs = c('No HF, first CV', 'HF, first CV', 'No HF, repeated CV', 'HF, repeated CV'),
+           risk.table.fontsize=2,
+           ggtheme = theme_light()) +
+  labs(x='Days')
+```
+
+## Patient-level analysis
+
+```{r tablecaf}
+#| tbl-cap: "Characteristics of patients"
+
+caf$patient_sex <- factor(caf$patient_sex, levels=c("male","female"),
+       labels=c("Male", 
+                "Female"))
+label(caf$patient_sex) <- "Sex"
+label(caf$patient_age) <- "Age (years)"
+label(caf$weight) <- "Weight (kg)"
+label(caf$height) <- "Height (cm)"
+
+caf$bmi <- 10000 * caf$weight / caf$height^2 
+label(caf$bmi) <- "Body mass index"
+
+caf$settings <- factor(caf$settings, levels=c("inpatient","outpatient"),
+       labels=c("Inpatient", 
+                "Outpatient"))
+caf$outcome <- factor(caf$outcome, levels=c(0,1),
+       labels=c("Failure", 
+                "Success"))
+label(caf$outcome) <- "Immediate outcome"
+
+caf$TEE <- factor(caf$TEE, levels=c(1,0),
+       labels=c("Yes", 
+                "No"))
+label(caf$TEE) <- "TEE performed"
+
+caf$ac_drug <- factor(caf$ac_drug, levels=c("warfarin", "NOAC", "none"),
+                     labels=c("Warfarin", "NOAC", "None"))
+label(caf$ac_drug) <- "Previous chronic anticoagulation"
+
+label(caf$sedation_dose) <- "Dose of propofol (mg)"
+
+label(caf$arrhythmia) <- "Type of arrhythmia"
+
+caf$duration_of_af <- factor(caf$duration_of_af, levels=c("less than 48 hours", 
+                                                 "less than a week",
+                                                 "more than a week",
+                                                 "more than a month",
+                                                 "unknown"))
+label(caf$duration_of_af) <- "Duration of arrhythmia"
+
+label(caf$cmbs) <- "Comorbidities"
+label(caf$MED) <- "Medication index"
+label(caf$shocks) <- "Number of schocks"
+label(caf$joules) <- "Energy of last shock"
+
+label(caf$HF) <- 'Heart failure'
+label(caf$HTN) <- 'Arterial hypertension'
+label(caf$DM) <- 'Diabetes mellitus'
+label(caf$CKD) <- 'Chronic kidney disease'
+label(caf$STROKE) <- 'Stroke'
+label(caf$CHD) <- 'Coronary heart disease'
+
+
+caf$specialty <- 'internist'
+caf[caf$physician=="А О" | caf$physician=='М О',]$specialty <- 'cardiologist'
+
+caf$specialty <- factor(caf$specialty, levels=c('internist', 'cardiologist'),
+                        labels=c('internis', 'cardiologist'))
+
+label(caf$specialty) <- 'Specialty of provider'
+
+caf <- caf %>%
+  mutate(
+    aad1 = case_when(
+      aad=='' ~ "None",
+      grepl("beta-blocker",aad) ~ "Beta-blocker",
+      grepl("amiodaron",aad) ~ "Antiarrhythmic drug",
+      grepl("sotalol",aad) ~ "Antiarrhythmic drug",
+      grepl("propa",aad) ~ "Antiarrhythmic drug",
+      grepl("verapamil",aad) ~ "None",
+      grepl("diltiazem",aad) ~ "None",
+      T ~ "None")
+  )
+
+
+caf$aad1 <- factor(caf$aad1, levels=c('None', 'Beta-blocker', 'Antiarrhythmic drug'))
+
+label(caf$aad1) <- "Antiarrhythmic drug prescription after first cardioversion"
+
+
+caf <- caf %>% mutate(
+  longterm = case_when(
+    (duration_of_af == 'less than 48 hours' | 
+      duration_of_af == 'less than a week') ~ 0,
+    T ~ 1
+  )
+)
+caf$longterm <- factor(caf$longterm, levels=c(0,1),
+                 labels=c('No', 'Yes'))
+label(caf$longterm) <-  "AF duration > 1 week"
+
+
+caf$bmi <- 10000 * caf$weight / caf$height^2 
+label(caf$bmi) <- "Body mass index"
+label(caf$patient_sex) <- "Sex"
+label(caf$cmbs) <- "Comorbidities"
+label(caf$MED) <- "Medication index"
+label(caf$event_reverse_id) <- "Cardioversions"
+
+
+label(caf$ef) <- "LV ejection fraction, %"
+label(caf$edvi) <- "Index of LV end-diastolic volume, ml/m²"
+label(caf$lavi) <- "Index of left atrial volume, ml/m²"
+label(caf$lvmi) <- "Index of LV mass, g/m²"
+
+
+caf %>%
+  select(patient_age, patient_sex, bmi, 
+         arrhythmia, 
+         aad1,
+         event_reverse_id,
+         HTN, CHD, HF, DM, STROKE, CKD, MED,
+         ef, edvi, lavi, lvmi) %>%
+  tbl_summary(missing = "no") %>%
+  add_n()
+
+
+
+```
+
+## Transition to permament form of arrhythmia
+
+```{r chronicaf_survival}
+#| tbl-cap: "Univariate predictors of transition to permanent arrhythmia"
+
+label(caf$aad1) <- 'Antiarrhythmic drug prescription after first cardioversion'
+
+tbl_uv <-
+  tbl_uvregression(
+    caf %>% select(event_time, event_type, patient_age, patient_sex, 
+                   longterm, arrhythmia, aad1, 
+                   HTN, CHD, HF, DM, STROKE, MED,
+                   bmi, ef, edvi, lvmi, lavi),
+    method = coxph,
+    y = Surv(event_time, event_type),
+    exponentiate = TRUE,
+    hide_n = T
+  ) %>%  modify_table_body(dplyr::select, -p.value)
+
+tbl_uv
+
+
+```
+
+```{r hf_adjustment}
+#| tbl-cap: "Heart failure association with transition to permanent arrhythmia."
+
+tbl_uv <-
+  tbl_uvregression(
+    caf %>% select(event_time, event_type, HF),
+    method = coxph,
+    y = Surv(event_time, event_type),
+    exponentiate = TRUE,
+    hide_n = T
+  ) %>%  modify_table_body(dplyr::select, -p.value)
+
+cox <- coxph(Surv(event_time,event_type) ~
+               patient_sex+ patient_age  +
+               HF + DM,
+             data=caf)
+tbl_sex_age <- tbl_regression(cox, exponentiate = T, include= c(HF)) %>%
+  modify_table_body(dplyr::select, -p.value)
+
+cox <- coxph(Surv(event_time,event_type) ~
+               patient_sex+ patient_age  + bmi + HF,
+             data=caf)
+
+tbl_sex_age_bmi <- tbl_regression(cox, exponentiate = T, include= c(HF)) %>%
+  modify_table_body(dplyr::select, -p.value)
+
+
+
+surv_hf <- tbl_merge(
+  tbls = list(tbl_uv, tbl_sex_age, tbl_sex_age_bmi),
+  tab_spanner = c("**Crude**", "**Adjusted for age and sex**", "**Adjusted for age, sex and BMI**")
+)
+
+```
+
+## Long-term
+
+```{r longterm}
+#| tbl-cap: "Arrhythmia duration association with transition to permanent arrhythmia."
+
+caf <- caf %>% mutate(
+  longterm = case_when(
+    (duration_of_af == 'less than 48 hours' | 
+      duration_of_af == 'less than a week') ~ 0,
+    T ~ 1
+  )
+)
+#caf$longterm <- factor(caf$longterm, levels=c(0,1),
+#                 labels=c('No', 'Yes'))
+label(caf$longterm) <-  "AF duration > 1 week"
+
+tbl_uv <-
+  tbl_uvregression(
+    caf %>% select(event_time, event_type, longterm),
+    method = coxph,
+    y = Surv(event_time, event_type),
+    exponentiate = TRUE,
+    hide_n = T
+  ) %>%  modify_table_body(dplyr::select, -p.value)
+
+cox <- coxph(Surv(event_time,event_type) ~
+               patient_sex+ patient_age  +
+               longterm,
+             data=caf)
+tbl_sex_age <- tbl_regression(cox, exponentiate = T, include= c(longterm)) %>%
+  modify_table_body(dplyr::select, -p.value)
+
+cox <- coxph(Surv(event_time,event_type) ~
+               patient_sex+ patient_age  +  longterm + bmi,
+             data=caf)
+
+tbl_sex_age_bmi <- tbl_regression(cox, exponentiate = T, include= c(longterm)) %>%
+  modify_table_body(dplyr::select, -p.value)
+
+
+
+surv_longterm <- tbl_merge(
+  tbls = list(tbl_uv, tbl_sex_age, tbl_sex_age_bmi),
+  tab_spanner = c("**Crude**", "**Adjusted for age and sex**", "**Adjusted for age, sex and BMI**")
+)
+
+tbl_stack(tbls = list(surv_hf, surv_longterm))
+```
+
+## Transition-free survival summary
+
+```{r transition_free_survival}
+#| tbl-cap: "Cumulative survival probability free from transition to permanent form"
+
+
+
+#fit <- survfit(Surv(event_time,event_type)~1,
+#               data=caf)
+
+
+
+
+caf$event_time_y <- caf$event_time / 365
+
+label(caf$HF) <-  "Heart failure"
+caf$HF <- factor(caf$HF, 
+                 levels=c(0,1),
+                 labels=c('No', 'Yes')
+)
+
+label(caf$longterm) <- 'AF duration > 1 week'
+caf$longterm <- factor(caf$longterm, 
+                 levels=c(0,1),
+                 labels=c('No', 'Yes')
+)
+
+
+tbl_survfit(
+  list(survfit(Surv(event_time_y,event_type) ~ 1, caf),
+       survfit(Surv(event_time_y,event_type) ~ HF, caf),
+       survfit(Surv(event_time_y,event_type) ~ longterm, caf)
+  ),
+  times = c(1,3, 5),
+  label_header = "**{time} year{ifelse(time>1, 's', '')}**"
+)
+
+
+```
+
+## Graphs
+
+### Chronic AF vs HF
+
+```{r chronicaf_graphs}
+
+caf$event_year <- caf$event_time/365
+
+fitHF <- survfit(Surv(event_year,event_type)~HF,
+               data=caf)
+
+ggsurvplot(fitHF, data=caf,
+#           surv.median.line = "hv", 
+           risk.table=T,
+           risk.table.fontsize=2,
+#           add.all = TRUE,
+           legend.labs = c("No heart failure", "Heart failure"),
+           xlim=c(0, 5),
+           break.time.by = 1,
+           conf.int = T, pval =F,# pval.coord=c(50,1),
+           ggtheme = theme_light()) +
+  labs(x='Years')
+```
+
+### Chronic AF vs longterm
+
+```{r chronicaf_graph2}
+
+fitLongterm <- survfit(Surv(event_year,event_type)~longterm,
+               data=caf)
+
+ggsurvplot(fitLongterm, data=caf,
+#           surv.median.line = "hv", 
+           risk.table=T,
+           risk.table.fontsize=2,
+           legend.labs = c("AF < 1 week", "AF > 1 week"),
+#           add.all = TRUE,
+           break.time.by = 1,
+           xlim=c(0, 5),
+           conf.int = T, pval =F,# pval.coord=c(50,1),
+           ggtheme = theme_light()) +
+  labs(x='Years')
+
+
+
+```
+
+```{r anticoagulation}
+
+
+dc %>%
+  mutate(
+    year = year(date)
+  ) %>%
+  group_by(year, ac_drug) %>%
+  summarize(n=n()) %>% 
+  ggplot(aes(x=year, y=n, fill=ac_drug)) +
+    geom_col(position="fill", stat="identity") +
+    theme_bw()
+  
+
+
+```
+
+The end
+
+```{r drugs_used}
+#| tbl-cap: "Drugs used prior, during and post cardioversion"
+
+
+dc <- dc %>%
+  mutate(
+    after_drug = case_when(
+      grepl('sotalol', dc$aad) ~ 'sotalol',
+      grepl('amiodaron', dc$aad) ~ 'amiodarone',
+      grepl('beta-blocker', dc$aad) ~ 'beta-blocker',
+      grepl('verapamil', dc$aad) ~ 'verapamil',
+      grepl('propafenone', dc$aad) ~ 'propafenone',
+      grepl('diltiazem', dc$aad) ~ 'diltiazem',
+      grepl('propanorm', dc$aad) ~ 'propafenone',
+      dc$aad=='' ~ 'none',
+      T ~ 'none'
+      )
+    ) 
+
+dc$after_drug <- factor(dc$after_drug, 
+                        levels=c('none', 'beta-blocker', 'amiodarone', 'sotalol',
+                                 'propafenone', 'verapamil', 'diltiazem'
+                                 ))
+label(dc$after_drug) <- 'Antiarrhythmic drug prescribed after cardioversion'
+
+dc <- dc %>%
+  mutate(
+    cv_drug = case_when(
+      grepl('amiod', dc$Drug) ~ 'amiodarone',
+      grepl('metoprolol', dc$Drug) ~ 'metoprolol',
+      grepl('sotalol', dc$Drug) ~ 'sotalol',
+      grepl('propafenone', dc$Drug) ~ 'propafenone',
+      dc$Drug=='' ~ 'none',
+      T ~ 'other'
+      )
+    ) 
+
+dc$cv_drug <- factor(dc$cv_drug, 
+                        levels=c('none', 'amiodarone', 'metoprolol',
+                                 'sotalol', 'propafenone'
+                                 ))
+label(dc$cv_drug) <- 'Antiarrhythmic drug used during cardioversion'
+
+
+dc %>% select(after_drug, cv_drug, ac_drug) %>%
+  tbl_summary()
+
+
+```
+
+## Complications
+
+```{r complications}
+#| tbl-cap: "Complications"
+
+dc %>%
+  filter(complications!='') %>%
+  mutate(compl = paste(complications, record_id, patient_id, patient_age)) %>%
+  select(compl) %>%
+  tbl_summary()
+
+
+```
+
+## Validation
+
+```{r validation}
+#| tbl-cap: "Internal validation of comorbidities measure"
+
+fit <- glm(cmbs ~ MED, data=dc, family='poisson')
+
+tb_un <- fit %>% tbl_regression(exponentiate = T)
+
+fit <- glm(cmbs ~ MED + patient_age + patient_sex, data=dc, family='poisson')
+tb_adj <- fit %>% tbl_regression(exponentiate = T, 
+                                 include = c(MED))
+
+tbl_merge(
+  tbls = list(tb_un, tb_adj),
+  tab_spanner = c('**Crude**', '**Adjusted for age and sex**')
+)
+
+```
+
+## Misc
+
+```{r misc}
+
+nrow(dc)/nrow(counts)*100
+nrow(dc)
+
+```
